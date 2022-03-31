@@ -1,7 +1,7 @@
 # CPL Hashed Linkage Toolkit
 
 This is the repository of code described in the California Policy Lab's [Hashed Linkages for
-Administrative Datasets]() guide. There are broadly two steps to a hashed linkage
+Administrative Datasets](https://www.capolicylab.org/connecting-families-to-benefits-using-linked-data-a-toolkit/) guide. There are broadly two steps to a hashed linkage
 (described in detail in the guide), hashing and
 linkage. At present, this repository contains code for the hashing step; code for the linkage step
 is in the process of being prepared for distribution. The files intended for use by an end user are
