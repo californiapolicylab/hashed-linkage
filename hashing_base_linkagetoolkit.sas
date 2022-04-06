@@ -252,6 +252,8 @@ Purpose: This is a general-purpose hashing script that will hash the following i
 			
 		%end;
 
+		drop &var_list;
+
 	run;
 
 *************************************************************************************
@@ -282,10 +284,10 @@ Purpose: This is a general-purpose hashing script that will hash the following i
 	;
 
 	%hash(		salt="",
-				first_name=first_name,
-				last_name=last_name,
-				dob=dob,
-				ssn=ssn,
+				first_name=,
+				last_name=,
+				dob=,
+				ssn=,
 				filepath_import="" encoding="utf-8",
 				filepath_export="",
 				filepath_log="",
