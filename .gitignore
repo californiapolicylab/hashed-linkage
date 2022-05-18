@@ -1,2 +1,4 @@
 .DS_Store
 scratch
+.Rhistory
+*.old
