@@ -1,6 +1,6 @@
 ***************************************************************************************
 Script: hashing_base.sas
-Date: April 2022
+Date: May 2022
 Author: California Policy Lab
 Purpose: This is a general-purpose hashing script that will hash the following identifying 
 		 variables (and various permutations of those variables) in the source data. This
@@ -58,11 +58,11 @@ Purpose: This is a general-purpose hashing script that will hash the following i
 	filename temp &filepath_import;
 
 	proc import datafile=temp
-	      out=raw_data 
+	      out=raw_data (keep=&first_name &last_name &dob &ssn) 
 	      dbms=csv
 	      replace;
 		  guessingrows=MAX;
-		  delimiter="|";
+		  delimiter=",";
 	run;
 
 
@@ -94,11 +94,63 @@ Purpose: This is a general-purpose hashing script that will hash the following i
 			&first_name = prxchange('s/^(mr\ |mrs\ |dr\ |ms\ |mr\.|mrs\.|dr\.|ms\.)+//', 1, &first_name);
 			&last_name = prxchange('s/(\ jr|\ sr|\ jr\.|\ sr\.)+\s*$//', 1, &last_name);
 
+		    * Replace special alphabetic characters with standard alphabetic characters;
+			u00e0=unicode('\u00E0'); *à;
+			u00e1=unicode('\u00E1'); *á;
+			u00e2=unicode('\u00E2'); *â;
+			u00e3=unicode('\u00E3'); *ã;
+			u00e4=unicode('\u00E4'); *ä;
+			u00e5=unicode('\u00E5'); *å;
+			u00e7=unicode('\u00E7'); *ç;
+			u00e8=unicode('\u00E8'); *è;
+			u00e9=unicode('\u00E9'); *é;
+			u00ea=unicode('\u00EA'); *ê;
+			u00eb=unicode('\u00EB'); *ë;
+			u00ec=unicode('\u00EC'); *ì;
+			u00ed=unicode('\u00ED'); *í;
+			u00ee=unicode('\u00EE'); *î;
+			u00ef=unicode('\u00EF'); *ï;
+			u00f2=unicode('\u00F2'); *ò;
+			u00f3=unicode('\u00F3'); *ó;
+			u00f4=unicode('\u00F4'); *ô;
+			u00f5=unicode('\u00F5'); *õ;
+			u00f6=unicode('\u00F6'); *ö;
+			u00f9=unicode('\u00F9'); *ù; 
+			u00fa=unicode('\u00FA'); *ú;
+			u00fb=unicode('\u00FB'); *û;
+			u00fc=unicode('\u00FC'); *ü;
+			u00fd=unicode('\u00FD'); *ý;
+			u00f1=unicode('\u00F1'); *ñ; 
+			u00c0=unicode('\u00C0'); *À;
+			u00c1=unicode('\u00C1'); *Á;
+			u00c2=unicode('\u00C2'); *Â;
+			u00c3=unicode('\u00C3'); *Ã;
+			u00c4=unicode('\u00C4'); *Ä;
+			u00c5=unicode('\u00C5'); *Å;
+			u00c7=unicode('\u00C7'); *Ç;
+			u00c8=unicode('\u00C8'); *È;
+			u00c9=unicode('\u00C9'); *É;
+			u00ca=unicode('\u00CA'); *Ê;
+			u00cb=unicode('\u00CB'); *Ë;
+			u00cc=unicode('\u00CC'); *Ì;
+			u00cd=unicode('\u00CD'); *Í;
+			u00ce=unicode('\u00CE'); *Î;
+			u00cf=unicode('\u00CF'); *Ï;
+			u00d1=unicode('\u00D1'); *Ñ;
+			u00d2=unicode('\u00D2'); *Ò;
+			u00d3=unicode('\u00D3'); *Ó;
+			u00d4=unicode('\u00D4'); *Ô;
+			u00d5=unicode('\u00D5'); *Õ;
+			u00d6=unicode('\u00D6'); *Ö;
+			u00d9=unicode('\u00D9'); *Ù;
+			u00da=unicode('\u00DA'); *Ú;
+			u00db=unicode('\u00DB'); *Û;
+			u00dc=unicode('\u00DC'); *Ü;
+			u00dd=unicode('\u00DD'); *Ý;
 
-			* Replace special characters with standard alphabetic characters;
-				*note: SAS is unable to read some of the special characters and replaces them in code with a question mark - appears to affect lower and upper case instances of C, E, and Y;
-			%let spec_char	 =	"à"	"á"	"â"	"ã"	"ä"	"å"	"c"	"c"	"c"	"c"	"ç"		"è"	"é"	"ê"		"ë"	"ì"	"í"	"î"	"i"	"ï"	"ò"	"ó"	"ô"	"õ"	"ö"	"ù"	"ú"	"û"	"u"	"ü"		"ý"	"y"	"ñ"	"À"	"Á"	"Â"	"Ã"	"Ä"	"Å"	"C"	"C"	"C"	"C"	"Ç"		"È"	"É"	"Ê"		"Ë"	"Ì"	"Í"	"Î"	"I"	"Ï"	"Ñ"	"Ò"	"Ó"	"Ô"	"Õ"	"Ö"	"Ù"	"Ú"	"Û"	"U"	"Ü"		"Ý"	"Y";
-			%let final_char  = 	"a"	"a"	"a"	"a"	"a"	"a"	"c"	"c"	"c"	"c"	"c"		"e"	"e"	"e"		"e"	"i"	"i"	"i"	"i"	"i"	"o"	"o"	"o"	"o"	"o"	"u"	"u"	"u"	"u"	"u"		"y"	"y"	"n"	"A"	"A"	"A"	"A"	"A"	"A"	"C"	"C"	"C"	"C"	"C"		"E"	"E"	"E"		"E"	"I"	"I"	"I"	"I"	"I"	"N"	"O"	"O"	"O"	"O"	"O"	"U"	"U"	"U"	"U"	"U"		"Y"	"Y";
+			%let spec_char = 	u00e0	u00e1	u00e2	u00e3	u00e4	u00e5	u00e7	u00e8	u00e9	u00ea	u00eb	u00ec	u00ed	u00ee	u00ef	u00f2	u00f3	u00f4	u00f5	u00f6	u00f9	u00fa	u00fb	u00fc	u00fd	u00f1	u00c0	u00c1	u00c2	u00c3	u00c4	u00c5	u00c7	u00c8	u00c9	u00ca	u00cb	u00cc	u00cd	u00ce	u00cf	u00d1	u00d2	u00d3	u00d4	u00d5	u00d6	u00d9	u00da	u00db	u00dc	u00dd	 ;
+			%let final_char = 	'a'		'a'		'a'		'a'		'a'		'a'		'c'		'e'		'e'		'e'		'e'		'i'		'i'		'i'		'i'		'o'		'o'		'o'		'o'		'o'		'u'		'u'		'u'		'u'		'y'		'n'		'A'		'A'		'A'		'A'		'A'		'A'		'C'		'E'		'E'		'E'		'E'		'I'		'I'		'I'		'I'		'N'		'O'		'O'		'O'		'O'		'O'		'U'		'U'		'U'		'U'		'Y'		 ;
+	   						* 	 à		 á		 â		 ã		 ä		 å		 ç		 è		 é		 ê		 ë		 ì		 í		 î		 ï		 ò		 ó		 ô		 õ		 ö		 ù		 ú		 û		 ü		 ý		 ñ		 À		 Á		 Â		 Ã		 Ä		 Å		 Ç		 È		 É		 Ê		 Ë		 Ì		 Í		 Î		 Ï		 Ñ		 Ò		 Ó		 Ô		 Õ		 Ö		 Ù		 Ú		 Û		 Ü		 Ý		 ;
 
 			%macro translate_spec_char;
 				%local i temp_old temp_new;
@@ -112,7 +164,7 @@ Purpose: This is a general-purpose hashing script that will hash the following i
 
 			%mend;
 			%translate_spec_char;
-			******************;
+			
 
 			* Remove all non a to z characters;
 			&first_name = prxchange('s/[^a-z]//', -1, &first_name);
@@ -227,7 +279,12 @@ Purpose: This is a general-purpose hashing script that will hash the following i
 			  		
 
 		* Drop intermediate vars and raw DOB;
-		drop ssn_length ssnA ssnB ssnC ssnA_num ssnB_num ssnC_num &dob ;
+		drop ssn_length ssnA ssnB ssnC ssnA_num ssnB_num ssnC_num &dob 
+				u00e0	u00e1	u00e2	u00e3	u00e4	u00e5	u00e7	u00e8	u00e9	u00ea	u00eb	u00ec	u00ed	u00ee	u00ef 	
+				u00f2	u00f3	u00f4	u00f5	u00f6	u00f9	u00fa	u00fb	u00fc	u00fd	u00f1	u00c0	u00c1	u00c2	u00c3	
+				u00c4	u00c5	u00c7	u00c8	u00c9	u00ca	u00cb	u00cc	u00cd	u00ce	u00cf	u00d1	u00d2	u00d3	u00d4	
+				u00d5	u00d6	u00d9	u00da	u00db	u00dc	u00dd	 ;
+
 		rename &first_name = fn &last_name = ln &ssn = ssn;
 
 
@@ -282,6 +339,7 @@ Purpose: This is a general-purpose hashing script that will hash the following i
 	  in the raw data. For example, if the ssn variable is named social_security,
       the input should be changed to ssn=social_security.
 	;
+
 
 	%hash(		salt="",
 				first_name=,
