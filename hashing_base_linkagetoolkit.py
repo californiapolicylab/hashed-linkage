@@ -31,6 +31,7 @@ from abydos.phonetic import Soundex
 import re
 from pathlib import Path
 import configparser
+from sys import argv
 
 import pdb
 
@@ -295,8 +296,13 @@ def hash_data(salt,
     return clean
 
 # Read in the config file
+# Get config file path from commandline if passed, otherwise use whatever's in the same directory as this script
+config_path = Path(argv[1]) if len(argv) > 1 else Path(__file__).parent.joinpath('hashing_config.ini')
+config_path = str(config_path.resolve())
+# Print it out so there's no ambiguity
+print('Reading config file from {}'.format(config_path))
 config = configparser.ConfigParser()
-config.read(str(Path(__file__).parent.joinpath('hashing_config.ini')))
+config.read(config_path)
 
 # Pull out the additional pandas arguments config section so we can clean it a bit and make it a dict
 config_additional_pandas_args = dict(config['Additional pandas arguments'])
