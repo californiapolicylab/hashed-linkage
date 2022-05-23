@@ -151,8 +151,7 @@ MergeField <- setRefClass(
         # Add the name of the field if this isn't a compound field
         colnames <- c(.self$name, colnames)
       }
-      # Add the bad flag
-      c(colnames, to_bad_flag_colname(.self$name))
+      colnames
     },
     df_contains_field=function(.self, df){
       # The dataframe contains all of the needed columns if it has all of the field's partial field, and 
@@ -161,9 +160,7 @@ MergeField <- setRefClass(
       # (Eg, for dob we just need columns called (dob_y, dob_m, dob_d), and don't need one called `dob`;
       # but for fn we need (fn1l, fn4l, fn_sdx), *and* fn itself)
       all(sapply(.self$partial_fields, function(x) x %in% colnames(df))) &
-        (.self$is_compound | (.self$name %in% colnames(df))) &
-        # Also need to check the bad flag is in here
-        (to_bad_flag_colname(.self$name) %in% colnames(df))
+        (.self$is_compound | (.self$name %in% colnames(df)))
     },
     score=function(.self, merged_df){.self$scoring_function(merged_df)}
   )
@@ -175,10 +172,10 @@ HashedMerge <- setRefClass(
   fields=list(left_df='ANY', right_df='ANY', merge_fields='list'),
   methods=list(
     score=function(.self, merged_df){
-      scores <- sapply(.self$merge_fields, function(field) field$score(merged_df), simplify=FALSE, USE.NAMES=TRUE)
+      scores <- sapply(.self$merge_fields, function(field) field$score(merged_df), simplify=FALSE, USE.NAMES=FALSE)
       # Rename them to have _score suffixes so that we can just bind them directly to the dataframe in the round
       # method below
-      names(scores) <- to_score_colname(names(scores))
+      names(scores) <- sapply(.self$merge_fields, function(mf) mf$name %>% to_score_colname()) %>% unlist() %>% unname()
       scores
     },
     round=function(.self, join_keys, other_conditions=All_of_conditions(conditions=list()), drop_bad=c()){
@@ -204,9 +201,9 @@ HashedMerge <- setRefClass(
       # ReferenceClasses, where it would make more sense to do this, are kind of a pain)
       # Since we're using this object, we'll make reference to merge_fields rathe than .self$merge_fields
       # throughout the code
-      merge_fields <- list()
+      named_merge_fields <- list()
       for(field in .self$merge_fields){
-        merge_fields[[field$name]] <- field
+        named_merge_fields[[field$name]] <- field
       }
 
       # The dataframes are gonna get copied on assignment in a sec anyway, so just do it now so that we don't
@@ -218,23 +215,21 @@ HashedMerge <- setRefClass(
       print(sprintf('Left dataset (as passed to hashed_merge_round) has %d records.', nrow(left_df)))
       print(sprintf('Right dataset (as passed to hashed_merge_round) has %d records.', nrow(right_df)))
       
-      # Get a vector of the names of the flag columns we're filtering by
-      bad_flags <- sapply(drop_bad, to_bad_flag_colname, USE.NAMES=FALSE)
-      # Select those columns and drop where any of the bad flags are true
-      left_df <- left_df %>% filter(!if_any(all_of(bad_flags)))
-      right_df <- right_df %>% filter(!if_any(all_of(bad_flags)))
+      # Drop where any of the bad flags are true
+      left_df <- left_df %>% filter(!if_any(all_of(drop_bad)))
+      right_df <- right_df %>% filter(!if_any(all_of(drop_bad)))
       # Print information about size of datasets after filtering
       print(sprintf('Left dataset has %d records after dropping bad records.', nrow(left_df)))
       print(sprintf('Right dataset has %d records after dropping bad records.', nrow(right_df)))
 
       # Deduplicate on PII and ID
       # Get list of all of the PII fields and bad flags we'll be using
-      all_pii_fields_and_bad_flags <- sapply(
-        merge_fields,
+      all_pii_fields_and_bad_flags <- c(sapply(
+        named_merge_fields,
         function(field) field$column_names(),
         simplify=TRUE,
         USE.NAMES=FALSE
-      ) %>% unlist() %>% unname()
+      ) %>% unlist() %>% unname(), drop_bad)
       left_df <- left_df %>% distinct(id, across(all_of(all_pii_fields_and_bad_flags)))
       right_df <- right_df %>% distinct(id, across(all_of(all_pii_fields_and_bad_flags)))
       # Print more info
@@ -244,12 +239,12 @@ HashedMerge <- setRefClass(
       # Join the two datasets on the join keys (i.e. on required perfect matches)
       # First need to handle join keys for compound fields, i.e. 'dob' as a join key does not have a single
       # field in the dataset called 'dob'
-      join_key_columns <- .self$merge_fields[join_keys] %>%
+      join_key_columns <- named_merge_fields[join_keys] %>%
         sapply(function(field) unlist(if(field$is_compound) field$partial_fields else field$name)) %>%
         unlist() %>%
         unname()
-      # The na_matches is redundant if bad_flags contains the flags for all of the join keys, but include it just
-      # to be safe
+      # The na_matches is to ensure we never match missings to missings (unlike SQL, the inner_join function
+      # will do that by default if you don't specify na_matches)
       merged <- inner_join(
         left_df,
         right_df,
@@ -271,7 +266,7 @@ HashedMerge <- setRefClass(
       has_other_conditions <- length(other_conditions$conditions) > 0
       if(has_other_conditions){
         # Evaluate the other conditions required for a match
-        meets_other_conditions <- other_conditions$evaluate(merge_fields, merged)
+        meets_other_conditions <- other_conditions$evaluate(named_merge_fields, merged)
         # Filter to candidate matches that meet the required other conditions
         matches <- merged %>% filter(meets_other_conditions)
       }else{
@@ -438,11 +433,6 @@ is_condition <- function(maybe_condition){
   return('column_name' %in% names(maybe_condition))
 }
 
-to_bad_flag_colname <- function(field){
-  #' Given a field name, return the standardized column name representing the flag for whether that value is bad.
-  return(paste0('bad_', field))
-}
-
 to_score_colname <- function(field){
   #' Given a field name, return the standardized column name representing that field's score column name.
   return(paste0(field, '_score'))
@@ -603,7 +593,7 @@ run_default_cpl_hashed_merge <- function(left, right, left_name, right_name, wri
   hashed_merge <- default_hashed_merge(left_df=left, right_df=right)
 
   # Round 0: Perfect match on all fields
-  round_0 <- hashed_merge$round(join_keys=c('ssn', 'fn', 'ln', 'dob'), drop_bad=c('ssn', 'fn', 'ln', 'dob'))
+  round_0 <- hashed_merge$round(join_keys=c('ssn', 'fn', 'ln', 'dob'), drop_bad=c('bad_ssn', 'bad_fn', 'bad_ln', 'bad_dob'))
   
   # Round 1: Perfect match on ssn, perfect match on 2 of fn/ln/dob, and fuzzy
   # match on whichever didn't perfect match
@@ -622,7 +612,7 @@ run_default_cpl_hashed_merge <- function(left, right, left_name, right_name, wri
       fuzzy_match('dob', 1)
     )
   ),
-  drop_bad=c('ssn', 'fn', 'ln', 'dob')
+  drop_bad=c('bad_ssn', 'bad_fn', 'bad_ln', 'bad_dob')
   )
   
   # Round 2: Perfect match on ssn, perfect match on 2 of fn/ln/dob
@@ -634,7 +624,7 @@ run_default_cpl_hashed_merge <- function(left, right, left_name, right_name, wri
       perfect_match('fn'),
       perfect_match('dob')
     ),
-    drop_bad=c('ssn')
+    drop_bad=c('bad_ssn')
   )
   
   # Round 4: Perfect match on ssn, perfect match on one of fn, ln, or DOB
@@ -646,7 +636,7 @@ run_default_cpl_hashed_merge <- function(left, right, left_name, right_name, wri
       perfect_match('fn'),
       perfect_match('dob')
     ),
-    drop_bad=c('ssn')
+    drop_bad=c('bad_ssn')
   )
   
   all_rounds <- list(
