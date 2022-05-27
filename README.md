@@ -20,31 +20,29 @@ can therefore be run by someone mostly unfamiliar with python, it does require a
 some knowledge of python to setup. As indicated by the documentation in the SAS script and .ini file, only the names of the PII fields
 and the most recent acceptable year for DOB should actually need to be changed by the end user.
 
-# Hashing
+This code is designed to be extensible to arbitrary pieces of PII, though this requires some programming in R. For users less familiar with
+R, or those whose PII is some subset of first name, last name, SSN, and date of birth (the "default" fields for which this code was originally
+developed), there are sensible defaults that can be used that require minimal programming by the end user.
 
 
+# Prerequisites
 
-# Linkage
-
-The code used to conduct linkages of data that has been hashed using CPL's hashing code is not yet packaged as
-a proper R package, but is primarily a single R file that can be `source`d in a notebook to load the required functions.
-The file in question is `hashed_merge.R`. `hashed_merge_template.Rmd` contains an example of all of the below in practice, and may
-be useful to look at before reading the rest of this section.
-
-There are a number of aspects of the linkage that must be worked out conceptually before actually using the linkage code.
-
-## Prerequisites
+There are a number of aspects of a hashed linkage that must be worked out beforehand for the process to proceed smoothly. Broadly, one
+should know the PII available in the data to be linked, as well as how it is going to be linked. Developing the scoring and matching rounds
+before conducting the hashing of the data allows the user to know what "partial" PII fields need to be created, what cleaning steps
+make the most sense, and how to flag bad data.
 
 ### PII fields
-This is somewhat trivial, as the use of this linkage code assumes that the data has already been hashed using the hashing scripts, and so
-the fields on which the linkage will be conducted have presumably already been agreed upon. Having a list of each field
-and its components/partial fields written out explicitly will make the development of the scoring schemes and rounds
-much simpler. This list could look as follows:
+Having a list of each PII field in the data, as well as any components/partial fields derived from it, will make the development of the scoring schemes and rounds
+much simpler (though there may be some back-and-forth as, for instance, desired levels of precision when constructing the matching rounds may necessitate the
+creation of new fields derived from the unhashed PII.) This list could look as follows:
 
 * First name: full first name, first two letters of first name, first four letters of first name, phonetic transcription
-	of first name
+  of first name
 * ...
 * Date of birth: year of birth, month of birth, day of birth
+
+You should also decide on criteria for what constitutes "bad" data in a given field, though the code can be used without this.
 
 ### Scoring schemes
 You will need to develop a scoring scheme (or use an already-constructed default) for each PII field contained in the datasets. By "scoring scheme", we mean
@@ -83,7 +81,7 @@ and SSN**. As an example of what rounds look like, the rounds used in the defaul
 
 * Round 0: Perfect match on SSN, FN, LN, DOB; exclude bad SSNs, FNs, LNs, DOBs
 * Round 1: Perfect match on SSN and two of (FN, LN, DOB), and any fuzzy match on the third; exclude bad SSNs, FNs, 
-	LNs, DOBs
+  LNs, DOBs
 * Round 2: Perfect match on SSN and two of (FN, LN, DOB); exclude bad SSNs
 * Round 3: Perfect match on SSN and one of (FN, LN, DOB); exclude bad SSNs
 
@@ -95,10 +93,107 @@ to have rounds that are technically redundant, as it adds only minimally to the 
 quickly filter matches by quality in the output, as the ultimate crosswalk produced will indicate the round in which
 each match was _first_ found.
 
+
+# Hashing
+
+The hashing code is built around some "default" specifications for the above conceptual prerequisites. It is available in
+either python or SAS, which produce the same output on any given dataset (with a minimal exception noted further down in this
+section). If your partial features, cleaning procedures, or definition of "bad" data differ from what is described here,
+you will need to edit the hashing code for whichever language you are using. The rest of this section will proceed
+assuming this is not the case, and that the hashing code is appropriate for your linkage as-is.
+
+
+## Cleaning procedures
+
+The cleaning procedures for each of the four PII fields is as follows:
+
+* First name
+    - Convert characters with accents or diacritics to 26-character alphabet characters
+    - Convert to lowercase
+    - Strip whitespace at ends
+    - Remove prefixes "Mr", "Mrs", "Dr", and "Ms"
+    - Remove all non-a-to-z characters
+* Last name
+    - Same as first name, except rather than removing prefixes the suffixes "Jr" and "Sr" are removed
+* SSN
+    - Remove all non-numeric characters
+    - Pad the left side with zeroes until it is 9 digits long
+* Date of birth
+    - None
+
+
+## Derived/"partial" features
+
+The following features are created from the full values of each PII field **before** hashing takes place:
+
+* First name (`fn`)
+    - First four letters of first name (`fn4l`)
+    - First two letters of first name (`fn2l`)
+    - Soundex phonetic transcription of first name (`fn_sdx`)
+* Last name (`ln`)
+    - Same as first name
+* SSN (`ssn`)
+    - 8 features, each of which is the full SSN with two adjacent digits removed; e.g., `ssn34` is the result
+    of removing the third and fourth digits from the full SSN
+* DOB
+    - Year of birth (`dob_y`)
+    - Month of birth (`dob_m`)
+    - Day of birth (`dob_d`)
+    - (Note that DOB has no "full" value in the output, only these three partial features)
+
+
+## Bad data flags
+
+Each of the four PII fields also has a flag indicating whether the data for that field in a given record
+should be treated as "bad", i.e. of insufficient quality to be used in evaluating matches in the linkage.
+The criteria used to determine this flag for each field are as follows:
+
+* First name (`bad_fn)
+    - String is empty after cleaning
+* Last name (`bad_ln`)
+    - Same as FN
+* SSN (`bad_ssn)
+    - String is empty, OR
+    - String is longer than 9 characters, OR
+    - The first three digits are "000" or "666", OR
+    - The fourth and fifth digits are "00", OR
+    - The sixth through ninth digits are "0000", OR
+    - The first digit is "9", OR
+    - The full value is either "078051120" or "123456789", i.e. is a common fake value
+    - (All of the above are checked after cleaning)
+* Date of birth (`bad_dob`)
+    - Any component of date of birth is missing, OR
+    - Year of birth is before 1900, OR
+    - Year of birth is after the value of `latest_year` set in the python config file or SAS macro call
+
+
+## Language differences
+
+The SAS and python hashing scripts should produce identical results when run on the same dataset, **with one exception**:
+the SAS code uses a slight variant of the true American Soundex algorithm (which is incidentally also used by SQL),
+which produces a different phonetic transcription in a very limited number of cases (~.02% in a test dataset of 100M names.)
+This is a known issue, but is currently unaddressed.
+
+Other data-specific possible sources of differences for which one may need to account stem from the `proc import` macro in SAS. This scans
+the entire dataset to guess the types of columns, but it may still guess incorrectly, particularly for social security numbers. You 
+should check the logfile to be sure that the SSN column was read as a string, and quote the SSN values if it was not. Date formats may also introduce
+discrepancies; this should be addressed proactively before running the code based on knowledge of how the dates are formatted in the
+dataset. The PII columns have their types hardcoded appropriately in the python script, so this should not be an issue if using that
+language. The python config file also contains an option to specify the format of dates in the data.
+
+
+# Linkage
+
+The code used to conduct linkages of data that has been hashed using CPL's hashing code is not yet packaged as
+a proper R package, but is primarily a single R file that can be `source`d in a notebook to load the required functions.
+The file in question is `hashed_merge.R`. `hashed_merge_template.Rmd` contains an example of all of the below in practice, and may
+be useful to look at before reading the rest of this section.
+
 ## Usage
 
-Once the above conceptual aspects of the linkage have been worked out, you can begin using the code. We will first
-define the set of PII fields that we have in our datasets, including how fuzzy matches on each field should be
+Usage of the linkage code consists mainly of translating the conceptual aspects of the linkage outlined in the `Prerequisites` section
+of this document into operational definitions in R. We will first define the set of PII fields that we have in our datasets, including how
+fuzzy matches on each field should be
 scored, and will then proceed to defining the rounds of our hashed linkage. This information and functionality
 is encapsulated in two classes created using R's ReferenceClass framework, `MergeField` and `HashedMerge`.
 
@@ -428,6 +523,6 @@ round_4 <- hashed_merge$round(
 
 ```
 
-## Example
+## Full example
 
-For a complete example of all of the above code in action, see `hashed_merge_template.Rmd`.
+For a complete example of usage of the linkage code, see `hashed_merge_template.Rmd`.

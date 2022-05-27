@@ -585,8 +585,8 @@ write_rds_hashed_merge <- function(...){
 
 ########## The star(s) of the show ##########
 
-run_default_cpl_hashed_merge <- function(left, right, left_name, right_name, write=TRUE,
-                                         dir='./', prefix='', suffix=''){
+run_default_cpl_hashed_merge <- function(left, right, left_name, right_name,
+                                         write=TRUE, dir='./', prefix='', suffix=''){
   # Write a single function to do the entire hashed merge process for 2 agencies using their names
 
   # Define the hashed merge object
