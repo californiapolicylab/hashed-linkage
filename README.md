@@ -3,8 +3,7 @@
 This is the repository of code described in the California Policy Lab's [Hashed Linkages for
 Administrative Datasets](https://www.capolicylab.org/connecting-families-to-benefits-using-linked-data-a-toolkit/) guide. There are broadly two steps to a hashed linkage
 (described in detail in the guide), hashing and
-linkage. At present, this repository contains code for the hashing step; code for the linkage step
-is in the process of being prepared for distribution. The files intended for use by an end user are
+linkage. This respository contains code for both of these steps. The files intended for use by an end user are
 as follows:
 
 ##### Hashing
@@ -13,6 +12,7 @@ as follows:
 
 ##### Linkage
 * `hashed_merge_template.Rmd` (R)
+* `hashed_merge_template_minimal.Rmd` (R)
 
 Either the SAS or python code can be used for the hashing process, according to the users's
 preferred language. While the python code itself should not need to be adjusted (all parameters are specified in the .ini file), and
@@ -22,7 +22,7 @@ and the most recent acceptable year for DOB should actually need to be changed b
 
 This code is designed to be extensible to arbitrary pieces of PII, though this requires some programming in R. For users less familiar with
 R, or those whose PII is some subset of first name, last name, SSN, and date of birth (the "default" fields for which this code was originally
-developed), there are sensible defaults that can be used that require minimal programming by the end user.
+developed), there are sensible defaults that can be used that require minimal programming by the end user, described in the `Linkage` section below.
 
 
 # Prerequisites
@@ -148,11 +148,11 @@ Each of the four PII fields also has a flag indicating whether the data for that
 should be treated as "bad", i.e. of insufficient quality to be used in evaluating matches in the linkage.
 The criteria used to determine this flag for each field are as follows:
 
-* First name (`bad_fn)
+* First name (`bad_fn`)
     - String is empty after cleaning
 * Last name (`bad_ln`)
     - Same as FN
-* SSN (`bad_ssn)
+* SSN (`bad_ssn`)
     - String is empty, OR
     - String is longer than 9 characters, OR
     - The first three digits are "000" or "666", OR
@@ -189,6 +189,19 @@ a proper R package, but is primarily a single R file that can be `source`d in a 
 The file in question is `hashed_merge.R`. `hashed_merge_template.Rmd` contains an example of all of the below in practice, and may
 be useful to look at before reading the rest of this section.
 
+
+## Data prep and ID creation
+
+You may need to do some cleaning or postprocessing even after hashing the data. The column names must match between the two datasets
+(and must match those specified by the default MergeFields further in this document if you are using them). Other typical cleaning and data prep
+includes casting columns to the correct types, and/or deduplication of datasets where appropriate. Additionally, the linkage code will expect
+a column called `id` in each dataset. This is the ID that will be included in the crosswalk that is the ultimate output of the linkage. **The
+linkage does not enforce any limitations as to each ID matching only to a single ID in the other dataset**; put another way, the ultimate
+crosswalk should be treated as having a many-to-many relationship between the two datasets' IDs. Depending on how you plan to use the
+crosswalk, this may mean that you will want to create IDs in each dataset that uniquely identify each row (or some key that uniquely
+identifies the data.) Alternatively, you can do your own postprocessing on the crosswalk to make it 1:1 or 1:M, as suits your usage.
+
+
 ## Usage
 
 Usage of the linkage code consists mainly of translating the conceptual aspects of the linkage outlined in the `Prerequisites` section
@@ -224,7 +237,9 @@ PII fields and scoring schemes into code. There are four fields that must be def
 	`_left` and `_right`.
 
 As illustrative examples, we include here the definitions of the default `MergeField`s included for first name,
-last name, SSN, and DOB.
+last name, SSN, and DOB. **If you are using these defaults, the column names in both datasets must match those
+in the
+ `name` and `partial_fields` fields in the source code below.**
 
 #### First name
 ```
@@ -523,6 +538,37 @@ round_4 <- hashed_merge$round(
 
 ```
 
+
+### Generating the final outputs
+
+To create a single crosswalk from the results of a series of rounds, and output some further diagnostics about each round, pass a list of
+the outputs from the rounds to to the `generate_match_outputs` function. This outputs three files:
+
+* `[Left agency name]_[Right agency name]_crosswalk.csv`: The main crosswalk, mapping IDs from the left dataset to IDs in the right dataset
+  and vice versa. Besides the IDs themselves, it contains columns indicating the earliest round and highest score for which each pair of IDs
+  was found as a match. (The earliest/highest is because an ID may be mapped to multiple sets of PII, and so may match to an ID in the other
+  dataset multiple times across or within rounds, and with different scores.)
+* `[Left agency name]_[Right agency name]_round_summaries.csv`: A table of diagnostics for the matches found in each round. This includes
+  information on the total number of matches, number of new (i.e. not found in previous rounds) matches, and the cardinality of matches.
+* `[Left agency name]_[Right agency name]_waterfall.csv`: A "waterfall" indicating the number of matches found in each round, broken out
+  by the round in which the match was originally found. If your rounds go in order of strictly loosening criteria (i.e. each round
+  should find all of the matches in all rounds before it), then only the diagonal of this table will be meaningful, and will just be the
+  number of new matches found in each round. This table is sometimes redundant with the round summaries, but is useful to quickly scan.
+
+It accepts the following arguments:
+
+* `all_rounds`: A `list` of the outputs from individual rounds. If the list is not named the rounds will be assumed to be in sequential order.
+  If the list is named, these will be used as the names of the rounds in the output. 
+* `left_name`, `right_name`: The names of the left and right datasets. These will be used just to name the columns in the crosswalk
+  of the form `[left_name]_id` and `[right_name]_id`, so that it is clear which ID is from which dataset.
+* `write_crosswalk`: A boolean indicating whether the crosswalk should be written to disk. Included because it is sometimes useful to not
+  overwrite an existing file when debugging, but usage of the `suffix` flag to avoid this is preferable to using this flag. This flag may
+  be deprecated at some point in future.
+* `dir`, `prefix`, and `suffix`: Strings indicating the path and filenames to which the output should be written. The three outputs
+  described above will be written to `[dir]/[prefix][output name][suffix].csv`.
+
+
 ## Full example
 
-For a complete example of usage of the linkage code, see `hashed_merge_template.Rmd`.
+For a complete example of usage of the linkage code, see `hashed_merge_template.Rmd`. For a greatly simplified example of usage with
+the default linkage strategy, see `hashed_merge_template_minimal.Rmd`.

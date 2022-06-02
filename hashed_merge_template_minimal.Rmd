@@ -13,6 +13,7 @@ source('hashed_merge.R')
 # Read in the two datasets
 left_dataset <- NULL
 right_dataset <- NULL
+# May need to do some renaming here to be sure that both datasets have an `id` column and the same names for all PII fields
 ```
 
 

@@ -5,19 +5,21 @@ library(timeR)
 
 ########## Condition sets ##########
 # Docstring:
-#' Class representing a single condition (i.e. perfect match, fuzzy match) in a hashed merge.
+#' Class representing a single condition (i.e. perfect match, fuzzy match) in a hashed merge. Looks for columns suffixed
+#' with `_left` and `_right` for each column invovlved in evaluating this condition. This naming convention is applied
+#' automatically in conducting a round of a HasheMerge.
 #' 
-#' @field column_name The name of the column to which the condition will be applied. The actual columns that will
-#' be looked for are column_name + '_left' and column_name + '_right'.
-#' @field perfect A logical representing whether this is a perfect (TRUE) or fuzzy (FALSE) match
-#' @field min_score For fuzzy matches, the minimum score which will be considered a match. The convenience constructor
-#' further down defaults this to 1. Ignored for perfect matches.
+#' @param field_name The name of the MergeField to which the condition will be applied (i.e. the piece of PII
+#'   this condition pertains to.)
+#' @param perfect A logical representing whether this is a perfect (TRUE) or fuzzy (FALSE) match
+#' @param min_score For fuzzy matches, the minimum score which will be considered a match. The convenience constructor
+#'   further down defaults this to 1. Ignored for perfect matches.
 Condition <- setRefClass(
   'Condition',
   fields=list(field_name='character', perfect='logical', min_score='numeric'),
   methods=list(
     evaluate=function(.self, merge_fields, df){
-      "Given a datatable, actually evaluate the match the Condition specifies. If a fuzzy match,
+      "Given a dataframe and set of MergeFields, actually evaluate the match the Condition specifies. If a fuzzy match,
       assumes that the match has already been scored and that the score is an appropriately-named column in df.
       Returns a logical vector of length nrow(df)."
       # Get the MergeField object for this field
@@ -28,7 +30,7 @@ Condition <- setRefClass(
         if(!(this_merge_field$is_compound)){
           return(df[[paste0(.self$field_name, '_left')]] == df[[paste0(.self$field_name, '_right')]])
         }else{
-          # It's compound, so need to check that all the partial fields are equal
+          # If it's compound, need to check that all the partial fields are equal
           # Calculate whether the left and right values are equal for each partial, and implicitly columnwise
           # bind them with simplify=TRUE
           partials_equal <- sapply(
@@ -58,10 +60,10 @@ Condition <- setRefClass(
 #' 
 #' As alluded to above, Condition_sets can contain either Conditions or other Condition_sets in their conditions
 #' field. The score and evaluate methods it implements handle this by recursively applying the method to each
-#' object in conditions until all of the objects are Conditions (not Condition_sets).
+#' object in `conditions` until all of the objects are Conditions (not Condition_sets).
 #' 
-#' @field conditions A list of Conditions or Condition_sets, to which the subclass-specific logic will be applied to
-#' determine whether the condition set is satisfied.
+#' @param conditions A list of Conditions or Condition_sets, to which the subclass-specific logic will be applied to
+#'   determine whether the condition set is satisfied.
 Condition_set <- setRefClass(
   'Condition_set',
   fields=list(conditions='list')
@@ -69,10 +71,10 @@ Condition_set <- setRefClass(
 
 
 # Docstring:
-#' Class representing a set of conditions with the logic that n of them must be true for the set of conditions to be
+#' Class representing a set of conditions with the logic that n of the conditions must be true for the set of conditions to be
 #' considered satisfied. Inherits from Condition_set.
-#' @field conditions See Condition_set
-#' @field n The number of conditions that must be true for the condition set to be considered satisfied
+#' @param conditions See Condition_set
+#' @param n The number of conditions that must be true for the condition set to be considered satisfied
 N_of_conditions <- setRefClass(
   'N_of_conditions',
   contains='Condition_set',  # Inherits from Condition_set
@@ -83,7 +85,7 @@ N_of_conditions <- setRefClass(
       this 'duck-typing' by giving both Condition_set and Condition a method named evaluate, so you can just call
       every object's evaluate method and the object itself will worry about which one it is.
       
-      n_of_helper sums the matrix returned by sapply into a single vector of length nrow(df) of the number of
+      n_of_helper sums the matrix returned by sapply into a single vector of length nrow(df) containing the number of
       TRUE conditions in the condition set, and then returns whether that is >= n."
       n_of_helper(n, sapply(conditions, function(x)x$evaluate(merge_fields, df), USE.NAMES=FALSE))
     }
@@ -94,7 +96,7 @@ N_of_conditions <- setRefClass(
 # Docstring:
 #' Class representing a set of conditions with the logic that all of them must be true for the set of conditions to be
 #' considered satisfied. Inherits from Condition_set.
-#' @field conditions See Condition_set
+#' @param conditions See Condition_set
 All_of_conditions <- setRefClass(
   'All_of_conditions',
   contains='Condition_set',  # Inherits from Condition_set
@@ -141,56 +143,88 @@ all_of_conditions <- function(...){
 
 ########## Class definitions ##########
 
+# Docstring:
+#' Class representing a piece of PII that will be linked on. Importantly, this class represents a *piece of PII*, not
+#' *a single column*. For instance, you would create a single MergeField object for each of first name, last name,
+#' date of birth, SSN, address, etc. These objects contain the logic needed to score and evaluate conditions on this
+#' piece of PII. The documentation for the arguments should help clarify the information contained in this object:
+#' 
+#' @param name The name of the field as a whole, e.g. `fn`, `ln`, `address`. If this field is not compound (see the 
+#'   `is_compound` argument below for an explanation), this value must match the name of the column containing the full value
+#'   of this piece of PII.
+#' 
+#' @param partial_fields The "partial" PII fields derived from this field. If this field is compound, this will be
+#'   the names of all of the columns that comprise the field; if it is not, it will contain the names of the columns
+#'   derived from the full value. This should be a list, not a vector, of strings.
+#' 
+#' @param is_compound A boolean indicating whether this is a _compound_ field. We define a compound field as one in which
+#'   there is no single field that can be checked for exact equality of the field as a whole. For example, first name
+#'   is _not_ compound, because we will have a single `fn` field that contains the full value of the field. However,
+#'   date of birth or address _are_ compound, because date of birth must be broken into year, month, and day, and because
+#'   address will be broken into any number of components. For compound fields, exact equality is checked by checking
+#'   _all_ of the field's `partial_fields`.
+#' 
+#' @param scoring_function A function used to score fuzzy matches on this field. It should take one argument, a dataframe,
+#'   and return a vector of scores with the same length as the dataframe. Each row of the dataframe can be assumed
+#'   to contain two values for this PII field, which we are scoring in relation to each other. The columns
+#'   corresponding to each value can be accessed with the name of the column in the base data, suffixed by
+#'   `_left` and `_right`, e.g. `fn_left` and `fn_right`.
 MergeField <- setRefClass(
   'MergeField',
   fields=list(name='character', partial_fields='list', is_compound='logical', scoring_function='function'),
   methods=list(
     column_names=function(.self){
+      #' Return a list of the column names encompassed by this field. Useful for checking the presence of all necesary
+      #' columns in the data, or generally for selecting all of the columns pertaining to this piece of PII.'
       colnames <- unlist(.self$partial_fields)
       if(!(.self$is_compound)){
-        # Add the name of the field if this isn't a compound field
+        # Add the name of the field itself if this isn't a compound field
         colnames <- c(.self$name, colnames)
       }
       colnames
-    },
-    df_contains_field=function(.self, df){
-      # The dataframe contains all of the needed columns if it has all of the field's partial field, and 
-      # the field is either a compound field (in which case the partial fields encompass all of the needed
-      # columns) or it has a column with the same name as the field
-      # (Eg, for dob we just need columns called (dob_y, dob_m, dob_d), and don't need one called `dob`;
-      # but for fn we need (fn1l, fn4l, fn_sdx), *and* fn itself)
-      all(sapply(.self$partial_fields, function(x) x %in% colnames(df))) &
-        (.self$is_compound | (.self$name %in% colnames(df)))
-    },
-    score=function(.self, merged_df){.self$scoring_function(merged_df)}
+    }
   )
 )
 
 
+# Docstring:
+#' Class representing the configuration of the hashed merge to be conducted. Encapsulates the datasets themselves, and all information
+#' needed to score matches on each PII field. The `round` method is used to conduct a single round of a hashed merge.
+#' 
+#' @param left_df The left dataset. It does not matter which dataset is the left vs the right, but you should keep track of which is which.
+#' 
+#' @param right_df The "right" dataset.
+#' 
+#' @param merge_fields A list (not vector) of `MergeField`s. This list should be comprehensive of all of the PII fields on which
+#'   the two datasets will be merged.
 HashedMerge <- setRefClass(
   'HashedMerge',
   fields=list(left_df='ANY', right_df='ANY', merge_fields='list'),
   methods=list(
     score=function(.self, merged_df){
-      scores <- sapply(.self$merge_fields, function(field) field$score(merged_df), simplify=FALSE, USE.NAMES=FALSE)
+      #' Score all of the PII fields used in this hashed merge. Takes in a dataframe containing two copies of each column needed
+      #' across all `MergeField`s, one suffixed with `_left` and one suffixed with `_right`. This is done as part of the `round`
+      #' method; the dataframe passed to this method is the result of joining the two datasets on the `join_keys` for a round.
+      
+      # Call the scoring function for each merge field
+      scores <- sapply(.self$merge_fields, function(field) field$scoring_function(merged_df), simplify=FALSE, USE.NAMES=FALSE)
       # Rename them to have _score suffixes so that we can just bind them directly to the dataframe in the round
       # method below
       names(scores) <- sapply(.self$merge_fields, function(mf) mf$name %>% to_score_colname()) %>% unlist() %>% unname()
       scores
     },
     round=function(.self, join_keys, other_conditions=All_of_conditions(conditions=list()), drop_bad=c()){
-      #' Function to conduct a hashed merged between two datasets.
-      #' @param left_df One of the two datasets to be merged. If either of the two datasets is considered to be the "spine"
-      #' dataset, it should be passed here. Should be a data.table.
-      #' @param right_df The other dataset to be merged. Should be a data.table
-      #' @param join_keys list/vector of field names on which the datasets will be joined (i.e. two observations must be
-      #' a perfect match on all of these fields to be considered a match candidate.) "dob" is acceptable here and will
-      #' be split out into its component parts by the function.
+      #' Method to conduct a single round of a hashed merge between two datasets.
+      #' @param join_keys list/vector of `MergeField` names on which the datasets will be joined (i.e. two observations must be
+      #'   a perfect match on all of these `MergeField`s to be considered a match candidate.)
       #' @param other_conditions A Condition_set representing other conditions, in addition to matching on the join_keys,
-      #' that must be satisfied for a pair of observations to be considered a match candidate
-      #' @param drop_bad list/vector of field names that should be dropped if the corresponding "bad flag" is TRUE. These
-      #' should be the field names themselves, not the bad flag column names. "dob" is acceptable here.
-      
+      #'   that must be satisfied for a pair of observations to be considered a match candidate. These are evaluated after
+      #'   joining the two datasets by the field indicated in `join_keys`. Must be a `Condition_set`, not a `Condition`. If
+      #'   you would like to pass a single condtion, wrap it in an `All_of_conditions`.
+      #' @param drop_bad list/vector of columns names indicating whether a record should be dropped. Put another way:
+      #'   if any of the columns listed in `drop_bad` is `TRUE` for a given row, that record will be excluded from this
+      #'   merge round.
+
       # Start timer
       timer <- createTimer(verbose=FALSE)
       timer$start('hashed_merge')
@@ -205,24 +239,13 @@ HashedMerge <- setRefClass(
       for(field in .self$merge_fields){
         named_merge_fields[[field$name]] <- field
       }
-
+      
       # The dataframes are gonna get copied on assignment in a sec anyway, so just do it now so that we don't
       # have to keep making calls to .self
       left_df <- .self$left_df
       right_df <- .self$right_df
-
-      # Print info about size of datasets
-      print(sprintf('Left dataset (as passed to hashed_merge_round) has %d records.', nrow(left_df)))
-      print(sprintf('Right dataset (as passed to hashed_merge_round) has %d records.', nrow(right_df)))
       
-      # Drop where any of the bad flags are true
-      left_df <- left_df %>% filter(!if_any(all_of(drop_bad)))
-      right_df <- right_df %>% filter(!if_any(all_of(drop_bad)))
-      # Print information about size of datasets after filtering
-      print(sprintf('Left dataset has %d records after dropping bad records.', nrow(left_df)))
-      print(sprintf('Right dataset has %d records after dropping bad records.', nrow(right_df)))
-
-      # Deduplicate on PII and ID
+      # Before we try to do anything, want it to break if all of the necessary columns are not present
       # Get list of all of the PII fields and bad flags we'll be using
       all_pii_fields_and_bad_flags <- c(sapply(
         named_merge_fields,
@@ -230,6 +253,42 @@ HashedMerge <- setRefClass(
         simplify=TRUE,
         USE.NAMES=FALSE
       ) %>% unlist() %>% unname(), drop_bad)
+      required_columns <- c('id', all_pii_fields_and_bad_flags)
+      left_missing_columns <- required_columns[!(required_columns %in% colnames(left_df))]
+      right_missing_columns <- required_columns[!(required_columns %in% colnames(right_df))]
+      # Create a list of error messages, which will only be populated if there are any issues
+      err_messages <- c()
+      if(length(left_missing_columns) > 0){
+        err_messages <- c(err_messages, sprintf('Left dataset mising columns %s', left_missing_columns))
+      }
+      if(length(right_missing_columns) > 0){
+        err_messages <- c(err_messages, sprintf('Right dataset mising columns %s', right_missing_columns))
+      }
+      if(length(err_messages) > 0){
+        # If either dataset is missing any required columns, raise an informative error
+        stop(paste(c(err_messages, 'Check your datasets and the MergeFields you are passing to this HashedMerge'), sep=';'))
+      }
+      
+      # Make sure the bad flags are logicals, since filter will complain otherwise
+      left_df <- left_df %>% mutate(across(all_of(drop_bad), as.logical))
+      left_df <- right_df %>% mutate(across(all_of(drop_bad), as.logical))
+      
+      # Print info about size of datasets
+      print(sprintf('Left dataset (as passed to hashed_merge_round) has %d records.', nrow(left_df)))
+      print(sprintf('Right dataset (as passed to hashed_merge_round) has %d records.', nrow(right_df)))
+      
+      # Drop where any of the bad flags are true
+      # For some reason if you pass an empty vector to all_of here it will drop all of the data, so only do
+      # this logic if there are any drop_bad flags
+      if(length(drop_bad) > 0){
+        left_df <- left_df %>% filter(!if_any(all_of(drop_bad)))
+        right_df <- right_df %>% filter(!if_any(all_of(drop_bad)))
+        # Print information about size of datasets after filtering
+        print(sprintf('Left dataset has %d records after dropping bad records.', nrow(left_df)))
+        print(sprintf('Right dataset has %d records after dropping bad records.', nrow(right_df)))
+      }
+
+      # Deduplicate on PII and ID
       left_df <- left_df %>% distinct(id, across(all_of(all_pii_fields_and_bad_flags)))
       right_df <- right_df %>% distinct(id, across(all_of(all_pii_fields_and_bad_flags)))
       # Print more info
@@ -273,7 +332,7 @@ HashedMerge <- setRefClass(
         # Anything that merged on the join keys is a match
         matches <- merged
       }
-      # Calculate max score and number of righthand match candidates within the join keys and left ID
+      # Calculate total score across all PII fields
       matches <- matches %>%
         # Shouldn't need the na.rm=TRUE here, but doesn't hurt
         mutate(total_score=rowSums(across(ends_with('_score')), na.rm=TRUE)) %>%
@@ -295,6 +354,13 @@ HashedMerge <- setRefClass(
 )
 
 
+########## Default linkage strategy ##########
+
+# This section contains the default scoring functions and MergeFields for CPL's default linkage strategy.
+# See the readme for more detail on the strategy itself.
+
+
+# Scoring functions for the four default MergeFields
 DEFAULT_LN_SCORE_FUNCTION <- function(df){
    case_when(
         # Full match is 102 points
@@ -378,6 +444,7 @@ DEFAULT_DOB_SCORE_FUNCTION <- function(df){
 }
 
 
+# The four default MergeFields themselves
 DEFAULT_FN_MERGE_FIELD <- MergeField(
   name='fn',
   partial_fields=list('fn4l', 'fn1l', 'fn_sdx'),
@@ -404,7 +471,11 @@ DEFAULT_DOB_MERGE_FIELD <- MergeField(
 )
 
 
-default_hashed_merge <- function(left_df, right_df, fn=TRUE, ln=TRUE, ssn=TRUE, dob=TRUE){
+default_hashed_merge_object <- function(left_df, right_df, fn=TRUE, ln=TRUE, ssn=TRUE, dob=TRUE){
+  #' Function to return a HashedMerge object corresponding to the default linkage strategy, given two datasets.
+  #' Can also subset the default fields using the four flags in the signature. Note that this just returns a
+  #' HashedMerge object; it does not actually run a hashed merge, or specify anything about the default rounds.
+  #' See the `run_default_cpl_hashed_merge` function to do this.
   merge_fields <- list()
   if(fn){merge_fields[['fn']] <- DEFAULT_FN_MERGE_FIELD}
   if(ln){merge_fields[['ln']] <- DEFAULT_LN_MERGE_FIELD}
@@ -418,7 +489,7 @@ default_hashed_merge <- function(left_df, right_df, fn=TRUE, ln=TRUE, ssn=TRUE, 
 }
 
 
-########## OO helper functions ##########
+########## Helper functions ##########
 
 n_of_helper <- function(n, eval_matrix){
   #' Just a helper for rowwise summing of a matrix of booleans and whether the result is >= n.
@@ -427,30 +498,9 @@ n_of_helper <- function(n, eval_matrix){
   return(rowSums(eval_matrix, na.rm=TRUE) >= n)  # Assumes this comes out of an sapply
 }
 
-is_condition <- function(maybe_condition){
-  #' Returns whether an object is a Condition. Used to differentiate Conditions and Condition_sets in some of the
-  #' methods above.
-  return('column_name' %in% names(maybe_condition))
-}
-
 to_score_colname <- function(field){
   #' Given a field name, return the standardized column name representing that field's score column name.
   return(paste0(field, '_score'))
-}
-
-get_condition_column_names <- function(condition_or_condition_set){
-  #' Given a Condition or Condition_set, return all of the column name encompassed by that object. This is used to get
-  #' the total set of columns contained in a Condition_set, it would be nonsensical to pass it a Condition directly
-  #' (but the function itself does this as it recurses over whatever object you pass it, hence why it accepts them.)
-  if(is_condition(condition_or_condition_set)){
-    # Ie if it's a column, just return its name
-    condition_or_condition_set$column_name
-  }else{
-    # Ie if it's a condition set, recursively apply this function to each of its conditions/condition sets
-    unique(sapply(condition_or_condition_set$conditions, function(maybe_condition){
-      get_condition_column_names(maybe_condition)
-    }))
-  }
 }
 
 
@@ -470,10 +520,10 @@ iteratively_collapse_column <- function(df, column_to_collapse, fixed_columns){
   #' 
   #' Returns the dataframe that was passed, with a new column named 'collapsed_{column_to_collapse}' added.
   #' 
-  #' @field df The dataframe to which the collapsed column should be added
-  #' @field column_to_collapse Column to be collapsed; this and fixed_columns are interchangeable, EXCEPT that
+  #' @param df The dataframe to which the collapsed column should be added
+  #' @param column_to_collapse Column to be collapsed; this and fixed_columns are interchangeable, EXCEPT that
   #'   column_to_collapse expects one column name and is the column from which the collapsed ID is drawn
-  #' @field fixed_columns Set of columns defining the other feature by which the edges are constructed. This
+  #' @param fixed_columns Set of columns defining the other feature by which the edges are constructed. This
   #'   expects a vector of strings, even if it is only one column.
   
   # Start timer
@@ -555,7 +605,8 @@ iteratively_collapse_column <- function(df, column_to_collapse, fixed_columns){
 
 write_file_hashed_merge <- function(df, output_name, ftype, dir='./',
                                     prefix='', suffix='', dated_copy=TRUE){
-  # Function for saving results, both a dated copy and overwriting the "current" version
+  #' Function for saving results, with the option to save a dated copy as well.
+  #' `ftype` can be 'csv' or 'rds'.
   
   # Create partial function for writing CSVs that writes NAs as empty strings
   my_write_csv <- function(...){write_csv(..., na='')}
@@ -587,10 +638,20 @@ write_rds_hashed_merge <- function(...){
 
 run_default_cpl_hashed_merge <- function(left, right, left_name, right_name,
                                          write=TRUE, dir='./', prefix='', suffix=''){
-  # Write a single function to do the entire hashed merge process for 2 agencies using their names
+  #' A single function to run the default CPL linkage strategy on two datasets. Does not allow any customization from the default;
+  #' if this is desired, it can be done straightforwardly using the MergeField and HashedMerge objects.
+  #' @param left The left dataset. It does not matter which dataset is the right vs the left, but you should keep
+  #'   track of which is which.
+  #' @param right The right dataset.
+  #' @param left_name The name of the left dataset. This is only used in naming the ID columns in the final crosswalk output.
+  #' @param right_name The name of the right dataset.
+  #' @param write Logical indicating whether the results should actually be written to disk.
+  #' @param dir Directory to which the results should be written.
+  #' @param prefix Prefix which will be prepended to output filenames.
+  #' @param suffix Suffix which will be appended to output filenames.
 
   # Define the hashed merge object
-  hashed_merge <- default_hashed_merge(left_df=left, right_df=right)
+  hashed_merge <- default_hashed_merge_object(left_df=left, right_df=right)
 
   # Round 0: Perfect match on all fields
   round_0 <- hashed_merge$round(join_keys=c('ssn', 'fn', 'ln', 'dob'), drop_bad=c('bad_ssn', 'bad_fn', 'bad_ln', 'bad_dob'))
@@ -655,18 +716,31 @@ run_default_cpl_hashed_merge <- function(left, right, left_name, right_name,
 
 generate_match_outputs <- function(all_rounds, left_name, right_name, write_crosswalk=TRUE,
                                    dir='./', prefix='', suffix=''){
-  
-  # We use a sort of dirty trick throughout this - the names of all_rounds should be string representations of the
-  # the round number, and since we may have dropped out some of our original rounds and it's confusing to renumber
-  # them, they may not be sequential, may not start at 0, etc (though they should be monotonically increasing).
-  # We'll index into the list using *string* representations of the round number
-  # when we want to pull by round number, and *integers* when we just want the nth element of the list. So it's
-  # very important to follow this convention when indexing into the list!!
+  #' Function to creat a single crosswalk, round summaries, and waterfalls for the rounds of a hashed linkage.
+  #' See the readme for more documentation on the outputs themselves.
+  #' 
+  #' @param all_rounds A list of the outputs of individual linkage rounds. If the list is named, those names will
+  #'   be used as the round names, otherwise they will be numbered sequentially.
+  #' @param left_name Name of the left dataset.
+  #' @param right_name Name of the right dataset.
+  #' @param write_croswalk A boolean indicating whether the crosswalk should be written to disk. Included because
+  #'   it is sometimes useful to not
+  #'   overwrite an existing file when debugging, but usage of the `suffix` flag to avoid this is preferable to using this flag.
+  #'   This flag may
+  #'   be deprecated at some point in future.
+  #' @param dir Directory to which the results should be written.
+  #' @param prefix Prefix which will be prepended to output filenames.
+  #' @param suffix Suffix which will be appended to output filenames.
   
   save_closure <- function(df, output_name){
     # Just define this once to make things easier
     write_csv_hashed_merge(df, paste(left_name, right_name, output_name, sep='_'), dir=dir,
                            prefix=prefix, suffix=suffix)
+  }
+  
+  # If there are no names on the rounds list, just number them sequentially
+  if(is.null(names(all_rounds))){
+    names(all_rounds) <- seq(1, length(all_rounds))
   }
   
   # Add a column for round number to the dataframe for each round
