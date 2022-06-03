@@ -271,7 +271,7 @@ HashedMerge <- setRefClass(
       
       # Make sure the bad flags are logicals, since filter will complain otherwise
       left_df <- left_df %>% mutate(across(all_of(drop_bad), as.logical))
-      left_df <- right_df %>% mutate(across(all_of(drop_bad), as.logical))
+      right_df <- right_df %>% mutate(across(all_of(drop_bad), as.logical))
       
       # Print info about size of datasets
       print(sprintf('Left dataset (as passed to hashed_merge_round) has %d records.', nrow(left_df)))
@@ -412,7 +412,7 @@ DEFAULT_SSN_SCORE_FUNCTION <- function(df){
     left_partial_name <- paste0(partial_ssn_name, '_left')
     right_partial_name <- paste0(partial_ssn_name, '_right')
     # Return a vector of whether the _left and _right values are equal for this partial SSN column
-    df %>% pull(.data[[left_partial_name]]) == df %>% pull(.data[[right_partial_name]])
+    df[[left_partial_name]] == df[[right_partial_name]]
   }, USE.NAMES=FALSE) 
   # 9 points if it's a perfect match, otherwise one point for each equal partial
   # Multiply the old version of the score by 12 to make it comparable to FN/LN/DOB
@@ -604,7 +604,7 @@ iteratively_collapse_column <- function(df, column_to_collapse, fixed_columns){
 
 
 write_file_hashed_merge <- function(df, output_name, ftype, dir='./',
-                                    prefix='', suffix='', dated_copy=TRUE){
+                                    prefix='', suffix='', dated_copy=FALSE){
   #' Function for saving results, with the option to save a dated copy as well.
   #' `ftype` can be 'csv' or 'rds'.
   
