@@ -1,0 +1,222 @@
+```{r}
+library(tidyverse)
+library(tidylog)
+library(data.table)
+library(timeR)
+library(haven)
+
+source('hashed_linkage.R')
+
+# Disable scientific notation
+options(scipen=999)
+
+# Limit the number of rows in each cell for testing (set to Inf for production)
+NROWS <- Inf
+# If FALSE won't write anything to disk
+WRITE <- TRUE
+# If TRUE deletes large objects at the end of each cell, so that the whole notebook can be run without
+# using up all of the server's memory
+CLEANUP <- TRUE
+
+my_write_rds <- function(...){
+  # Just an easy way to not have to have if(WRITE) all over the script but still control it with one parameter
+  if(WRITE){
+    write_rds(...)
+  }
+}
+```
+
+
+```{r}
+# Define the list of full PII fields that we'll use
+FULL_PII_FIELDS <- c('ssn', 'fn', 'ln', 'dob_d', 'dob_m', 'dob_y')
+
+generate_surviving_ids <- function(df, name, preassign=FALSE){
+  # Function for finding sets of records that are linked transitively by either PII or ID
+
+  # We use the `id` column to actually generate the surviving IDs, but also need an `agency_id` column to
+  # have something to fill in for the bad SSNs
+  stopifnot(('id' %in% colnames(df)) & ('agency_id' %in% colnames(df)))
+  
+  # If the preassign flag is on, we group surviving IDs by exact PII before the linkage,
+  # so that the call to distinct() by PII and ID
+  # in the hashed linkage will cut down on the cardinality significantly. This is especially useful for agencies
+  # which have a lot of records with the same PII for each person. Note that this only works if all full PII is
+  # nonmissing, because otherwise we can't be sure that full PII would result in the same surviving ID.
+  if(preassign){
+    # First create a row number column before we split the datarame so that we don't
+    # have collisions between the good PII IDs and bad PII IDs
+    df <- df %>% mutate(row_num=row_number())
+    # Separate into rows that have all good full PII and rows that don't
+    df <- bind_rows(
+      df %>%
+        # Keep only rows where all full PII is nonmissing
+        filter(if_all(all_of(FULL_PII_FIELDS), function(x) !is.na(x))) %>%
+        # Group by full PII
+        group_by(across(all_of(FULL_PII_FIELDS))) %>%
+        # Give them all the ID for the min row num
+        mutate(id=min(id)) %>%
+        ungroup(),
+      # For rows without all good PII, can't say a priori whether they'll end up with the same surviving ID, so
+      # just keep their existing ID
+      df %>%
+        # Keep only rows where some full PII fields are missing
+        filter(!if_all(all_of(FULL_PII_FIELDS), function(x) !is.na(x)))
+    ) %>%
+      # Drop out the row_num
+      select(-row_num)
+  }
+
+
+  surviving_ids_crosswalk <- HashedLinkage(
+    left_df=df %>% filter(!bad_ssn),
+    right_df=df %>% filter(!bad_ssn),
+    linkage_fields=list(DEFAULT_FN_LINKAGE_FIELD, 
+                        DEFAULT_LN_LINKAGE_FIELD,
+                        DEFAULT_SSN_LINKAGE_FIELD, 
+                        DEFAULT_DOB_LINKAGE_FIELD)
+  )$round(
+    # Matching using round 4 criteria since it would also capture stricter matches. 
+    join_keys=c('ssn'),
+    other_conditions=n_of_conditions(
+      1,
+      perfect_match('ln'),
+      perfect_match('fn'),
+      perfect_match('dob')
+    ),
+    drop_bad=c('bad_ssn')
+  ) %>%
+    # Now collapse on this new ID
+    iteratively_collapse_column(column_to_collapse='id_left', fixed_columns=c('id_right')) %>%
+    # We could join this back onto the dataframe based on PII, but we want to not split IDs into multiple surviving
+    # IDs,. This happens if you join by PII because there are cases where some records within an 
+    # agency ID have bad PII and some do not, and so the good PII records would join by PII but the bad records would
+    # not and would then get some other ID filled in later. So since we've handled ID before the data is passed into
+    # this function, we just give each row its own ID, we can safely join by ID rather
+    # than PII, which also ensures we aren't splitting any original IDs across multiple IDs.
+    # We have PII on both the left and right, but since both A-B and B-A should appear in the self-linked df,
+    # and since A-A and B-B also appear and connect those two, they will all have the same surviving ID, so we
+    # can use the fields in either the left or right arbitrarily, so we just use left.
+    # Get the mappings from ID to collapsed ID
+    distinct(collapsed_id_left, id_left) %>%
+    # Rename collapsed ID to surviving ID
+    rename(surviving_id=collapsed_id_left, id=id_left)
+
+  # Join it onto the original dataframe, by ID
+  df %>% left_join(surviving_ids_crosswalk, by='id') %>%
+    # Fill in surviving ID for records with bad SSNs
+    mutate(surviving_id=coalesce(
+      # Use surviving ID for records where we have it, which should be all records with good SSNS
+      surviving_id,
+      # For records with bad SSNs, we want to just use the original agency ID - we don't have enough info
+      # to say anything else about it, so we trust agency ID even for agencies where we don't do that for good records.
+      # But also need to modify it to be sure it doesn't collide with any of the actual surviving IDs, so we prepend BADSSN to it
+      paste0('BADSSN', toupper(name), agency_id)
+      ))
+}
+
+
+check_pii_cardinalities <- function(df){
+  # Checks that the full PII fields in a dataframe are M:1 with the bad flags and with the partial PII fields
+  # Throws an error if this is not the case
+  multi_counts <- as_tibble_row(list(
+    fn=(
+      df %>%
+          group_by(fn) %>%
+          summarize(multi_partial=n_distinct(fn1l) > 1 |
+                      n_distinct(fn4l) > 1 |
+                      n_distinct(fn_sdx) > 1 |
+                      n_distinct(bad_fn) > 1) %>%
+          pull(multi_partial) %>%
+          sum()
+      ),
+    ln=(
+      df %>%
+        group_by(ln) %>%
+        summarize(multi_partial=n_distinct(ln1l) > 1 |
+                    n_distinct(ln4l) > 1 |
+                    n_distinct(ln_sdx) > 1 |
+                    n_distinct(bad_ln) > 1) %>%
+        pull(multi_partial) %>%
+        sum()
+    ),
+    ssn=(
+      df %>%
+        group_by(ssn) %>%
+        summarize(multi_partial=n_distinct(ssn12) > 1 |
+                    n_distinct(ssn23) > 1 |
+                    n_distinct(ssn34) > 1 |
+                    n_distinct(ssn45) > 1 |
+                    n_distinct(ssn56) > 1 |
+                    n_distinct(ssn67) > 1 |
+                    n_distinct(ssn78) > 1 |
+                    n_distinct(ssn89) > 1 |
+                    n_distinct(bad_ssn) > 1) %>%
+        pull(multi_partial) %>%
+        sum()
+    )
+  ))
+  print(multi_counts)
+  stopifnot(all(multi_counts == 0))
+  print('Confirmed that full PII is M:1 with partial PII and bad flags :)')
+  multi_counts
+}
+
+```
+
+
+```{r}
+
+# Read in data
+df<- fread('### WRITE: FILE PATH ### ',
+            colClasses='character',
+            nrows=NROWS)
+
+# Clean up column names
+df<- df %>%
+  # Make the bad flags have underscores
+  rename_with(~stringr::str_replace(., '^bad', 'bad_')) %>%
+  # Make everything lowercase (just to be safe)
+  rename_with(tolower, everything()) %>%
+  # Strip off the _hash suffix
+  rename_with(~stringr::str_replace(., '_hash$', ''), everything()) %>%
+  mutate(
+  # Convert the bad_ flags to numeric, then logical
+  across(starts_with('bad_'), as.logical)) %>%
+  # Filter out PIIs that have more than 1 ID 
+  group_by(ssn, fn, ln, dob_d, dob_m, dob_y) %>%
+  filter(n_distinct( '### WRITE: COL NAME FOR AGENCY ID AS PROVIDED BY AGENCY ### ') == 1) %>%
+  ungroup()
+
+# Generate new surviving ids
+df <- df%>%
+  rename(agency_id= '### WRITE: COL NAME FOR AGENCY ID AS PROVIDED BY AGENCY ###') %>%
+  mutate(id=paste0('### WRITE: AGENCY NAME ### ', as.character(3000000000+row_number()))) %>%
+  # Generate surviving IDs. Use Preassignment for large longitudinal datasets because otherwise we will run out of memory. 
+  generate_surviving_ids('df', preassign=TRUE) %>%
+  # Drop out the nonsense id
+  select(-id)
+
+# Look at the distribution of number of surviving IDs for each original ID
+df_surv_ids_distribution <- df %>%
+  group_by(agency_id) %>%
+  summarize(n_surv=n_distinct(surviving_id)) %>%
+  dplyr::count(n_surv)
+df_surv_ids_distribution
+
+# Create a variable that's a unique row identifier
+df %>% my_write_rds('### OUTPUT FILE PATH ###')
+
+# Cleanup if need be
+if(CLEANUP){
+  rm()
+  gc()
+}
+```
+
+
+```{r}
+# Check all cardinalities
+check_pii_cardinalities(df)
+```
+

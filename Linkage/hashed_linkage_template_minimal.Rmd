@@ -1,0 +1,24 @@
+```{r}
+# Load tidyverse and tidylog libraries
+# Tidylog can be commented out if it isn't present, it just logs additional pertinent info on dplyr operations
+library(tidyverse)
+library(tidylog)
+
+# Load the hashed linkage library
+source('hashed_linkage.R')
+```
+
+
+```{r}
+# Read in the two datasets
+left_dataset <- NULL
+right_dataset <- NULL
+# May need to do some renaming here to be sure that both datasets have an `id` column and the same names for all PII fields
+```
+
+
+```{r}
+# To run the default hashed_linkage, this is all we have to do:
+run_default_hashed_linkage(left_dataset, right_dataset, left_name='Left dataset name', right_name='Right dataset name')
+# All of the outputs will be written to disk (can control location with the `dir` argument)
+```
