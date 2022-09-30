@@ -1,6 +1,7 @@
 ***************************************************************************************
 Script: hashing_base.sas
 Date: May 2022
+Updated: June 2022
 Author: California Policy Lab
 Purpose: This is a general-purpose hashing script that will hash the following identifying 
 		 variables (and various permutations of those variables) in the source data. This
@@ -58,7 +59,7 @@ Purpose: This is a general-purpose hashing script that will hash the following i
 	filename temp &filepath_import;
 
 	proc import datafile=temp
-	      out=raw_data (keep=&first_name &last_name &dob &ssn) 
+	      out=raw_data 
 	      dbms=csv
 	      replace;
 		  guessingrows=MAX;
@@ -218,24 +219,27 @@ Purpose: This is a general-purpose hashing script that will hash the following i
 
 	
 		* Clean SSNs;
-			* "aps" indicates other characters to remove - "a" is alphabetic, "p" is punctuation, "s" is whitespace;
-		      &ssn = compress(&ssn, " ", "aps"); 
-		      ssn_length = length(&ssn);
+		      	*Make ssn a string variable;
+		      ssn_str = put(&ssn, 9.);		      
+
+		      	* "aps" indicates other characters to remove - "a" is alphabetic, "p" is punctuation, "s" is whitespace;
+		      ssn_str = compress(ssn_str, " ", "aps"); 
+		      ssn_length = length(ssn_str);
 
 			* Pad SSNs with leading zeroes to 9 characters;
-		      if ssn_length=8 then &ssn = cats("0", &ssn);
-		      if ssn_length=7 then &ssn = cats("00", &ssn);
-		      if ssn_length=6 then &ssn = cats("000", &ssn);
-		      if ssn_length=5 then &ssn = cats("0000", &ssn);
-		      if ssn_length=4 then &ssn = cats("00000", &ssn);
-		      if ssn_length=3 then &ssn = cats("000000", &ssn);
-		      if ssn_length=2 then &ssn = cats("0000000", &ssn);
-		      if ssn_length=1 then &ssn = cats("00000000", &ssn);
+		      if ssn_length=8 then ssn_str = cats("0", ssn_str);
+		      if ssn_length=7 then ssn_str = cats("00", ssn_str);
+		      if ssn_length=6 then ssn_str = cats("000", ssn_str);
+		      if ssn_length=5 then ssn_str = cats("0000", ssn_str);
+		      if ssn_length=4 then ssn_str = cats("00000", ssn_str);
+		      if ssn_length=3 then ssn_str = cats("000000", ssn_str);
+		      if ssn_length=2 then ssn_str = cats("0000000", ssn_str);
+		      if ssn_length=1 then ssn_str = cats("00000000", ssn_str);
 
 			* Make three variables to flag invalid SSNs;
-		      ssnA = substr(&ssn,1,3);
-		      ssnB = substr(&ssn,4,2);
-		      ssnC = substr(&ssn,6,4);
+		      ssnA = substr(ssn_str,1,3);
+		      ssnB = substr(ssn_str,4,2);
+		      ssnC = substr(ssn_str,6,4);
 
 			* Make numeric versions of the same;
 		      ssnA_num = input(ssnA, best3.);
@@ -246,7 +250,7 @@ Purpose: This is a general-purpose hashing script that will hash the following i
 		      badSSN = 0 ;
 
 			* SSNs should only have 9 digits;			  
-		      ssn_length = length(&ssn);
+		      ssn_length = length(ssn_str);
 			  if ssn_length>9 then badSSN = 1; 
 
 			* These are values that are not assigned by the SSA;
@@ -255,8 +259,8 @@ Purpose: This is a general-purpose hashing script that will hash the following i
 		      if ssnA_num in(900:999) then badSSN = 1;
 
 			* These are common fake values of SSNs;
-		      if &ssn = "078051120" then badSSN = 1;
-		      if &ssn = "123456789" then badSSN = 1;
+		      if ssn_str = "078051120" then badSSN = 1;
+		      if ssn_str = "123456789" then badSSN = 1;
 
 			* Make other ssn variables that will be hashed at the end;
 		  	  * ssn89 = ssn excluding digits 8 and 9;
@@ -264,28 +268,28 @@ Purpose: This is a general-purpose hashing script that will hash the following i
 			  * this will only allow matches to SSNs that are either 1 digit off, or have 2 consecutive digits off;
 			  * Only create these features for good SSNS, otherwise fill the SSN itself with an empty string;
 			  if badSSN = 0 then do;
-			      ssn89 = substr(&ssn,1,7);
-			      ssn78 = cats(substr(&ssn,1,6),substr(&ssn,9,1));
-			      ssn67 = cats(substr(&ssn,1,5),substr(&ssn,8,2));
-			      ssn56 = cats(substr(&ssn,1,4),substr(&ssn,7,3));
-			      ssn45 = cats(substr(&ssn,1,3),substr(&ssn,6,4));
-			      ssn34 = cats(substr(&ssn,1,2),substr(&ssn,5,5));
-			      ssn23 = cats(substr(&ssn,1,1),substr(&ssn,4,6));
-			      ssn12 = substr(&ssn,3,7);
+			      ssn89 = substr(ssn_str,1,7);
+			      ssn78 = cats(substr(ssn_str,1,6),substr(ssn_str,9,1));
+			      ssn67 = cats(substr(ssn_str,1,5),substr(ssn_str,8,2));
+			      ssn56 = cats(substr(ssn_str,1,4),substr(ssn_str,7,3));
+			      ssn45 = cats(substr(ssn_str,1,3),substr(ssn_str,6,4));
+			      ssn34 = cats(substr(ssn_str,1,2),substr(ssn_str,5,5));
+			      ssn23 = cats(substr(ssn_str,1,1),substr(ssn_str,4,6));
+			      ssn12 = substr(ssn_str,3,7);
 			  end;
 			  else do;
-			  	  &ssn = "";
+			  	  ssn_str = "";
 			  end;
 			  		
 
-		* Drop intermediate vars and raw DOB;
-		drop ssn_length ssnA ssnB ssnC ssnA_num ssnB_num ssnC_num &dob 
+		* Drop intermediate vars and raw DOB, SSN;
+		drop &ssn ssn_length ssnA ssnB ssnC ssnA_num ssnB_num ssnC_num &dob 
 				u00e0	u00e1	u00e2	u00e3	u00e4	u00e5	u00e7	u00e8	u00e9	u00ea	u00eb	u00ec	u00ed	u00ee	u00ef 	
 				u00f2	u00f3	u00f4	u00f5	u00f6	u00f9	u00fa	u00fb	u00fc	u00fd	u00f1	u00c0	u00c1	u00c2	u00c3	
 				u00c4	u00c5	u00c7	u00c8	u00c9	u00ca	u00cb	u00cc	u00cd	u00ce	u00cf	u00d1	u00d2	u00d3	u00d4	
 				u00d5	u00d6	u00d9	u00da	u00db	u00dc	u00dd	 ;
 
-		rename &first_name = fn &last_name = ln &ssn = ssn;
+		rename &first_name = fn &last_name = ln ssn_str = ssn;
 
 
 	run;
