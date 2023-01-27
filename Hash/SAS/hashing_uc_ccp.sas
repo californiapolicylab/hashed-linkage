@@ -1,9 +1,9 @@
 ***************************************************************************************
-Script: hashing_experian_bell.sas
+Script: hashing_uc_ccp.sas
 Date: April 2022
 Author: California Policy Lab / Alex Bell (alexbell@ucla.edu)
 Purpose: This is a hashing script that will hash the following identifying variables 
-		(and various permutations of those variables) in the source Experian data. 
+		(and various permutations of those variables) in the source data. 
 			1. SSN
 			2. DOB
 				- Day
@@ -22,10 +22,10 @@ Purpose: This is a hashing script that will hash the following identifying varia
 				- Unit type
 				- Unit ID
 				- City
-		 This script must be modified by Experian before running in the following ways:
+		 This script must be modified before running in the following ways:
 		 	1. Changing the salt to whatever is applicable for the project
 			2. Changing the variable names and filepaths in the macro call at the bottom
-				to correspond to the raw data at Experian
+				to correspond to the raw data
 Input:
 	Please produce a CSV dataset that has on it:
 		CTK
@@ -462,7 +462,7 @@ proc contents data = work.hashed_data; run;
 				city=inventor_city_name,
 				dob=dob,
 				ssn=ssn,
-				filepath_import="/home/ambell0/sasuser.v94/experiantestdata.csv" encoding="utf-8",
+				filepath_import="/home/your/file_path/here.csv" encoding="utf-8",
 				filepath_export="/home/ambell0/sasuser.v94/out.csv",
 				filepath_log="/home/ambell0/sasuser.v94/log.txt",
 				latest_year=2022
