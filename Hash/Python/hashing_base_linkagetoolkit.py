@@ -89,7 +89,7 @@ def clean_and_preprocess_data(
 
     # Read in the table of special characters we want to convert
     special_characters = pd.read_csv(
-        str(Path(__file__).parent.joinpath('Unicode Values Sheet - unicode_short (1).csv')),
+        str(Path(__file__).parent.joinpath('unicode_values_for_hashing.csv')),
         dtype=str
     )
     # Clean up the column names a little
@@ -301,7 +301,7 @@ config_path = Path(argv[1]) if len(argv) > 1 else Path(__file__).parent.joinpath
 config_path = str(config_path.resolve())
 # Print it out so there's no ambiguity
 print('Reading config file from {}'.format(config_path))
-config = configparser.ConfigParser()
+config = configparser.ConfigParser(interpolation=None) 
 config.read(config_path)
 
 # Pull out the additional pandas arguments config section so we can clean it a bit and make it a dict
