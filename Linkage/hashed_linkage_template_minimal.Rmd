@@ -19,6 +19,6 @@ right_dataset <- NULL
 
 ```{r}
 # To run the default hashed_linkage, this is all we have to do:
-run_default_hashed_linkage(left_dataset, right_dataset, left_name='Left dataset name', right_name='Right dataset name')
+run_default_cpl_hashed_linkage(left_dataset, right_dataset, left_name='Left dataset name', right_name='Right dataset name')
 # All of the outputs will be written to disk (can control location with the `dir` argument)
 ```
